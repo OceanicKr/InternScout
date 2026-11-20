@@ -1,0 +1,16 @@
+{
+  "profile": {
+    "name": "Your Name",
+    "email": "you@example.com",
+    "location": "City, Country (timezone, e.g. IST, UTC+5:30)",
+    "education": "B.E. Computer Science, Your University, 2025-present",
+    "links": "GitHub: https://github.com/your-handle | LinkedIn: your-profile",
+    "skills": "Python, PyTorch, C/C++, ROS 2, computer vision, embedded systems",
+    "interests": "machine learning, robotics, embedded systems",
+    "resume": "YOUR NAME\nCity | you@example.com | github.com/your-handle\n\nEDUCATION\n...\n\nPROJECTS\n...\n\nSKILLS\n..."
+  },
+  "settings": {
+    "n8nBase": "http://localhost:5678",
+    "minScore": 55
+  }
+}

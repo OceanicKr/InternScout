@@ -1,0 +1,12 @@
+# dependencies and build output
+node_modules/
+app/dist/
+*.zip
+
+# your real profile / resume (use app/seed-profile.example.json as the template)
+app/seed-profile.json
+
+# secrets
+.env
+*.key
+API Key.txt

@@ -1,0 +1,132 @@
+{
+  "name": "InternScout 3 - Application Builder",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "submit-application",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Application request (from app)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        0
+      ],
+      "webhookId": "internscout-submit-application"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst MODEL = 'gpt-4o-mini';\nconst b = $json.body || {};\nif (!b.job || !b.profile) throw new Error('Need { job, profile, questions }');\nconst pasted = Array.isArray(b.questions) ? b.questions.filter(q=>q && q.question && q.question.trim()) : [];\n\n// Read the live posting for richer, company-specific context (best-effort).\nlet fullPosting = b.job.description || '';\nif (b.job.url) {\n  try {\n    const html = await this.helpers.httpRequest({ url:b.job.url, headers:{'User-Agent':'Mozilla/5.0 InternScout'}, timeout:20000 });\n    const text = String(html).replace(/<script[\\s\\S]*?<\\/script>/gi,' ').replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&[a-z]+;/gi,' ').replace(/\\s+/g,' ').trim();\n    if (text.length > fullPosting.length) fullPosting = text.slice(0, 7000);\n  } catch(e){}\n}\n\nconst sys = 'You help a candidate apply to a remote internship. For EVERY question, produce 3-4 strong answer options, each from a DIFFERENT angle (e.g. project/achievement-led, skills-led, motivation-&-company-fit-led, concise/punchy). Ground every answer ONLY in the candidate resume, profile and their draft notes. NEVER invent experience, tools, employers, or credentials. Respect any word limit in the question. If the candidate provided no questions, PREDICT the 5-6 most likely application questions for this role and company (e.g. why this company, why you, a relevant project, biggest challenge solved, availability/timezone, what you want to learn) and answer those. Respond ONLY with JSON: {\"questions\":[{\"question\":string,\"predicted\":boolean,\"options\":[{\"angle\":string,\"text\":string}]}],\"submission_checklist\":[strings],\"email_subject\":string,\"email_body\":string,\"honesty_check\":string}.';\n\nconst user = 'ROLE\\nTitle: '+b.job.title+'\\nCompany: '+b.job.company+'\\nLocation: '+(b.job.location||'')+'\\n\\nPOSTING (full text where available):\\n'+fullPosting.slice(0,7000)+'\\n\\nCANDIDATE\\nName: '+(b.profile.name||'')+'\\nEmail: '+(b.profile.email||'')+'\\nLinks: '+(b.profile.links||'')+'\\nSkills: '+(b.profile.skills||'')+'\\nInterests: '+(b.profile.interests||'')+'\\n\\nRESUME (source of truth):\\n'+(b.tailored_resume||b.profile.resume||'')+'\\n\\n'+(pasted.length ? ('THE EXACT QUESTIONS TO ANSWER (with any draft notes):\\n'+JSON.stringify(pasted,null,2)) : 'No questions provided — predict the most likely ones and answer them.');\n\nreturn { json: { jobId:b.job.id, requestBody: { model:MODEL, temperature:0.45, response_format:{type:'json_object'}, messages:[{role:'system',content:sys},{role:'user',content:user}] } } };\n"
+      },
+      "name": "Build options request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Generate options with ChatGPT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst src = $('Build options request').item.json;\nconst raw = $json.choices?.[0]?.message?.content || '{}';\nlet out;\ntry { out = JSON.parse(raw.replace(/^```(json)?/m,'').replace(/```\\s*$/m,'').trim()); }\ncatch(e){ out = { questions:[], submission_checklist:['Could not parse model output.'], email_subject:'', email_body:'' }; }\nconst questions = (out.questions||[]).map(q => ({\n  question: q.question || '',\n  predicted: !!q.predicted,\n  options: Array.isArray(q.options) ? q.options.filter(o=>o&&o.text).slice(0,4) : [],\n  selected: 0,\n  answer: (q.options && q.options[0] && q.options[0].text) || ''\n}));\nreturn { json: { ok:true, jobId:src.jobId, questions, submission_checklist:out.submission_checklist||[], email_subject:out.email_subject||'', email_body:out.email_body||'', honesty_check:out.honesty_check||'', preparedAt:new Date().toISOString() } };\n"
+      },
+      "name": "Package application",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Respond to app",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Application request (from app)": {
+      "main": [
+        [
+          {
+            "node": "Build options request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build options request": {
+      "main": [
+        [
+          {
+            "node": "Generate options with ChatGPT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate options with ChatGPT": {
+      "main": [
+        [
+          {
+            "node": "Package application",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package application": {
+      "main": [
+        [
+          {
+            "node": "Respond to app",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
