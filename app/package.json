@@ -1,0 +1,58 @@
+{
+  "name": "internscout",
+  "version": "1.0.0",
+  "description": "Desktop mission control for the InternScout n8n pipeline \u2014 remote internship matches, resume tailoring, and application tracking.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "author": "Sagar Kumar",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "express": "^4.19.0"
+  },
+  "build": {
+    "appId": "dev.sagar.internscout",
+    "productName": "InternScout",
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "shortcutName": "InternScout"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "seed-profile*.json",
+      "build/icon.ico",
+      "package.json"
+    ]
+  }
+}

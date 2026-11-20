@@ -1,0 +1,222 @@
+{
+  "name": "InternScout 1 - Internship Scout",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Every 6 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst APP_BASE = 'http://localhost:4823';\nconst MODEL = 'gpt-4o-mini';\nconst MAX_JOBS_PER_RUN = 70;\n\nlet profile, config;\ntry {\n  profile = await this.helpers.httpRequest({ url: APP_BASE + '/api/profile', json: true });\n  config  = await this.helpers.httpRequest({ url: APP_BASE + '/api/config', json: true });\n} catch (e) { throw new Error('InternScout app not reachable at ' + APP_BASE + '. Start it first. (' + e.message + ')'); }\nif (!profile || !profile.skills) throw new Error('Fill in your profile (skills + resume) in the app first.');\nconfig = config || {};\nconst watched = Array.isArray(config.watchedCompanies) ? config.watchedCompanies : [];\nconst adz = config.adzuna || {};\nconst cfg = {\n  requirePaid: config.requirePaid !== false,\n  requireGlobal: config.requireGlobal !== false,\n  minScore: Number(config.minScore) || 50,\n  interestKeywords: config.interestKeywords || ''\n};\n\nconst strip = (h) => String(h||'').replace(/<[^>]+>/g,' ').replace(/&[a-z]+;/gi,' ').replace(/\\s+/g,' ').trim();\nconst cdata = (s) => String(s||'').replace(/<!\\[CDATA\\[/g,'').replace(/\\]\\]>/g,'').trim();\nconst push = (arr,j) => { if (j && j.title && j.title.length > 2) arr.push(j); };\nconst jobs = [];\nconst INTERN = /\\bintern(ship)?s?\\b|\\bco-?op\\b|\\bsummer analyst\\b|\\bworking student\\b|\\bwerkstudent\\b|\\bindustrial placement\\b|\\bplacement year\\b|\\bsummer (program|programme)\\b/i;\n\n// ---------- Global remote boards (no key) ----------\ntry { const r = await this.helpers.httpRequest({ url:'https://remotive.com/api/remote-jobs?search=intern&limit=80', json:true });\n  for (const j of (r.jobs||[])) push(jobs,{ id:'remotive-'+j.id, title:j.title, company:j.company_name, url:j.url, location:j.candidate_required_location||'Remote', tags:j.tags||[], salary:j.salary||'', posted:j.publication_date||'', description:strip(j.description).slice(0,4500), source:'Remotive' }); } catch(e){}\n\ntry { const r = await this.helpers.httpRequest({ url:'https://jobicy.com/api/v2/remote-jobs?count=50&tag=intern', json:true });\n  for (const j of (r.jobs||[])) push(jobs,{ id:'jobicy-'+j.id, title:j.jobTitle, company:j.companyName, url:j.url, location:j.jobGeo||'Remote', tags:[].concat(j.jobIndustry||[]), salary:(j.annualSalaryMin?('$'+j.annualSalaryMin+'-'+j.annualSalaryMax):''), posted:j.pubDate||'', description:strip(j.jobDescription).slice(0,4500), source:'Jobicy' }); } catch(e){}\n\ntry { const r = await this.helpers.httpRequest({ url:'https://www.arbeitnow.com/api/job-board-api', json:true });\n  for (const j of (r.data||[])) { if(!j.remote) continue; push(jobs,{ id:'arbeitnow-'+j.slug, title:j.title, company:j.company_name, url:j.url, location:j.location||'Remote', tags:j.tags||[], salary:'', posted:j.created_at?new Date(j.created_at*1000).toISOString():'', description:strip(j.description).slice(0,4500), source:'Arbeitnow (EU)' }); } } catch(e){}\n\ntry { const r = await this.helpers.httpRequest({ url:'https://remoteok.com/api', headers:{'User-Agent':'Mozilla/5.0 InternScout'}, json:true });\n  for (const j of (Array.isArray(r)?r:[])) { if(!j||!j.position) continue; push(jobs,{ id:'remoteok-'+(j.id||j.slug), title:j.position, company:j.company, url:j.url||('https://remoteok.com/l/'+j.id), location:j.location||'Remote', tags:j.tags||[], salary:(j.salary_min?('$'+j.salary_min+'-'+j.salary_max):''), posted:j.date||'', description:strip(j.description).slice(0,4500), source:'RemoteOK' }); } } catch(e){}\n\ntry { const r = await this.helpers.httpRequest({ url:'https://www.themuse.com/api/public/jobs?level=Internship&page=0', json:true });\n  for (const j of (r.results||[])) { const locs=(j.locations||[]).map(l=>l.name).join(', '); if(!/remote|flexible/i.test(locs)) continue; push(jobs,{ id:'muse-'+j.id, title:j.name, company:(j.company||{}).name||'', url:(j.refs||{}).landing_page||'', location:locs||'Remote', tags:(j.categories||[]).map(c=>c.name), salary:'', posted:j.publication_date||'', description:strip(j.contents).slice(0,4500), source:'The Muse' }); } } catch(e){}\n\n// WeWorkRemotely RSS (global remote) -- parse XML\nconst wwrFeeds = ['https://weworkremotely.com/categories/remote-programming-jobs.rss','https://weworkremotely.com/categories/all-other-remote-jobs.rss'];\nfor (const feed of wwrFeeds) {\n  try {\n    const xml = await this.helpers.httpRequest({ url:feed, headers:{'User-Agent':'Mozilla/5.0 InternScout'} });\n    const items = String(xml).split('<item>').slice(1);\n    for (const it of items) {\n      const pick = (t) => { const m = it.match(new RegExp('<'+t+'>([\\\\s\\\\S]*?)</'+t+'>')); return m?cdata(m[1]):''; };\n      let title = pick('title'); const link = pick('link').trim();\n      let company=''; let role=title;\n      if (title.includes(':')) { const i=title.indexOf(':'); company=title.slice(0,i).trim(); role=title.slice(i+1).trim(); }\n      push(jobs,{ id:'wwr-'+(link.split('/').filter(Boolean).pop()||Math.random()), title:role, company:company||'(see posting)', url:link, location:pick('region')||'Remote', tags:[], salary:'', posted:pick('pubDate'), description:strip(pick('description')).slice(0,4500), source:'WeWorkRemotely' });\n    }\n  } catch(e){}\n}\n\n// ---------- Adzuna (multi-country, salary) ----------\nif (adz.appId && adz.appKey) {\n  for (const country of (adz.countries || ['in','gb','us'])) {\n    try {\n      const url = 'https://api.adzuna.com/v1/api/jobs/'+country+'/search/1?app_id='+encodeURIComponent(adz.appId)+'&app_key='+encodeURIComponent(adz.appKey)+'&what=internship&results_per_page=40&content-type=application/json';\n      const r = await this.helpers.httpRequest({ url, json:true });\n      for (const j of (r.results||[])) { const sal=j.salary_min?('~'+Math.round(j.salary_min)+(j.salary_max?('-'+Math.round(j.salary_max)):'')+' '+country.toUpperCase()):''; push(jobs,{ id:'adzuna-'+j.id, title:j.title, company:(j.company||{}).display_name||'', url:j.redirect_url||'', location:(j.location||{}).display_name||'Remote', tags:[(j.category||{}).label].filter(Boolean), salary:sal, posted:j.created||'', description:strip(j.description).slice(0,4500), source:'Adzuna '+country.toUpperCase() }); }\n    } catch(e){}\n  }\n}\n\n// ---------- Watched companies via official ATS feeds ----------\nfor (const entry of watched) {\n  const [s,t] = String(entry).split(':'); const sys=(s||'').trim().toLowerCase(); const token=(t||'').trim();\n  if (!sys || !token) continue;\n  try {\n    if (sys==='greenhouse') { const r=await this.helpers.httpRequest({ url:'https://boards-api.greenhouse.io/v1/boards/'+token+'/jobs?content=true', json:true }); for (const j of (r.jobs||[])) push(jobs,{ id:'gh-'+token+'-'+j.id, title:j.title, company:token, url:j.absolute_url, location:(j.location||{}).name||'', tags:[], salary:'', posted:j.updated_at||'', description:strip(j.content).slice(0,4500), source:'Greenhouse/'+token }); }\n    else if (sys==='lever') { const r=await this.helpers.httpRequest({ url:'https://api.lever.co/v0/postings/'+token+'?mode=json', json:true }); for (const j of (Array.isArray(r)?r:[])) push(jobs,{ id:'lever-'+token+'-'+j.id, title:j.text, company:token, url:j.hostedUrl, location:((j.categories||{}).location)||'', tags:[(j.categories||{}).commitment].filter(Boolean), salary:'', posted:j.createdAt?new Date(j.createdAt).toISOString():'', description:strip(j.descriptionPlain||j.description).slice(0,4500), source:'Lever/'+token }); }\n    else if (sys==='ashby') { const r=await this.helpers.httpRequest({ url:'https://api.ashbyhq.com/posting-api/job-board/'+token+'?includeCompensation=true', json:true }); for (const j of (r.jobs||[])) push(jobs,{ id:'ashby-'+token+'-'+j.id, title:j.title, company:token, url:j.jobUrl, location:j.locationName||'', tags:[j.employmentType].filter(Boolean), salary:(j.compensation&&j.compensation.compensationTierSummary)||'', posted:j.publishedDate||'', description:strip(j.descriptionPlain).slice(0,4500), source:'Ashby/'+token }); }\n    else if (sys==='workable') { const r=await this.helpers.httpRequest({ url:'https://apply.workable.com/api/v1/widget/accounts/'+token+'?details=true', json:true }); for (const j of (r.jobs||[])) push(jobs,{ id:'wk-'+token+'-'+(j.shortcode||j.id), title:j.title, company:token, url:j.url||j.application_url, location:[(j.city||''),(j.country||'')].filter(Boolean).join(', '), tags:[], salary:'', posted:j.published_on||'', description:strip(j.description).slice(0,4500), source:'Workable/'+token }); }\n  } catch(e){}\n}\n\n// ---------- Filter to genuine internships, dedupe, cap ----------\nconst FULLTIME = /\\b(full[ -]?time|graduate program(me)?|senior|lead|staff|principal|director|head of|manager)\\b/i;\nconst isWatched = (j) => /^(gh|lever|ashby|wk)-/.test(j.id);\nconst internships = jobs.filter(j => { const t=String(j.title||''); if(FULLTIME.test(t)) return false; return isWatched(j) || INTERN.test(t); });\nconst seen=new Set(); const deduped=[];\nfor (const j of internships){ const k=(j.title+'|'+j.company).toLowerCase(); if(seen.has(k))continue; seen.add(k); deduped.push(j); }\ndeduped.sort((a,b)=>String(b.posted).localeCompare(String(a.posted)));\nconst batch = deduped.slice(0, MAX_JOBS_PER_RUN);\nif (!batch.length) return [{ json:{ empty:true } }];\n\nconst profileText = ['Name: '+(profile.name||''),'Skills: '+(profile.skills||''),'Interests: '+(profile.interests||''),'Preferred-domain keywords: '+(cfg.interestKeywords||'(none)'),'Education: '+(profile.education||''),'Location/timezone: '+(profile.location||''),'Base resume:\\n'+(profile.resume||'')].join('\\n');\n\nreturn batch.map(job => ({ json: { job, cfg, requestBody: {\n  model: MODEL, temperature:0.2, response_format:{type:'json_object'},\n  messages:[\n    { role:'system', content:'You are a meticulous internship analyst for a candidate who needs roles that are (1) REMOTE, (2) a genuine INTERNSHIP/co-op/placement for students or recent entrants, (3) PAID, and (4) OPEN TO INTERNATIONAL APPLICANTS (not restricted to one country or requiring local work authorization). AI/ML and robotics roles are strongly preferred. HARD GATE: if it is not a remote internship, score 0. Judge honestly and never invent candidate skills. Read carefully for: pay (stipend/salary stated or clearly implied = paid; \"unpaid\"/\"for credit only\" = not paid; silent = unclear), and geographic eligibility (worldwide/anywhere/EMEA-global = international; \"US only\", \"must be authorized to work in X\", single-country = not international). Estimate company reputation from your knowledge. Respond ONLY with JSON: {\"is_remote_internship\":boolean,\"is_paid\":{\"paid\":true|false|null,\"note\":string},\"accepts_international\":boolean,\"is_ai_robotics\":boolean,\"domain\":string,\"is_international\":boolean,\"score\":0-100 fit,\"reputation\":{\"tier\":\"top\"|\"established\"|\"startup\"|\"unknown\",\"score\":0-100,\"note\":string},\"compensation\":{\"stated\":boolean,\"summary\":string},\"fit_summary\":string,\"matching_skills\":[from profile only],\"gaps\":[strings],\"resume_angle\":string,\"red_flags\":[strings]}. If not a remote internship set score 0.' },\n    { role:'user', content:'CANDIDATE\\n'+profileText+'\\n\\nPOSTING\\nTitle: '+job.title+'\\nCompany: '+job.company+'\\nLocation: '+job.location+'\\nListed salary/stipend (if any): '+(job.salary||'none')+'\\nSource: '+job.source+'\\nTags: '+(job.tags||[]).join(', ')+'\\nDescription:\\n'+job.description }\n  ]\n} } }));\n"
+      },
+      "name": "Scout & normalize jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Has jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "Score with ChatGPT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        120,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst raw = $json.choices?.[0]?.message?.content || '{}';\nlet a; try { a = JSON.parse(raw.replace(/^```(json)?/m,'').replace(/```\\s*$/m,'').trim()); } catch(e){ a={is_remote_internship:false,score:0}; }\nconst s = $('Scout & normalize jobs').item.json;\nconst job = s.job; const cfg = s.cfg || {};\nif (a.is_remote_internship === false) return { json:{ skip:true } };\nif (cfg.requirePaid && a.is_paid && a.is_paid.paid === false) return { json:{ skip:true } };\nif (cfg.requireGlobal && a.accepts_international === false) return { json:{ skip:true } };\nconst fit = a.score||0;\nif (fit < (cfg.minScore||50)) return { json:{ skip:true } };\nconst rep = (a.reputation && a.reputation.score) || 0;\nlet composite = 0.55*fit + 0.30*rep;\nif (a.is_ai_robotics) composite += 12;\ncomposite = Math.min(100, Math.round(composite));\nreturn { json: { ...job, analysis:a, composite, status:'new', foundAt:new Date().toISOString() } };\n"
+      },
+      "name": "Parse & keep matches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Is a match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:4823/api/jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Deliver to desktop app",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        -160
+      ]
+    }
+  ],
+  "connections": {
+    "Every 6 hours": {
+      "main": [
+        [
+          {
+            "node": "Scout & normalize jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scout & normalize jobs": {
+      "main": [
+        [
+          {
+            "node": "Has jobs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has jobs?": {
+      "main": [
+        [
+          {
+            "node": "Score with ChatGPT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Score with ChatGPT": {
+      "main": [
+        [
+          {
+            "node": "Parse & keep matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & keep matches": {
+      "main": [
+        [
+          {
+            "node": "Is a match?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is a match?": {
+      "main": [
+        [
+          {
+            "node": "Deliver to desktop app",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InternScout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="frame">
+
+    <!-- Pipeline rail -->
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <h1>Intern<em>Scout</em></h1>
+        <p class="brand-sub">remote internship pipeline</p>
+      </div>
+
+      <nav class="pipeline" id="pipelineNav">
+        <button class="stage active" data-view="new">
+          <span class="stage-label">Scouted</span>
+          <span class="stage-count mono" id="count-new">0</span>
+        </button>
+        <button class="stage" data-view="tailored">
+          <span class="stage-label">Tailored</span>
+          <span class="stage-count mono" id="count-tailored">0</span>
+        </button>
+        <button class="stage" data-view="applied">
+          <span class="stage-label">Submitted</span>
+          <span class="stage-count mono" id="count-applied">0</span>
+        </button>
+        <button class="stage" data-view="dismissed">
+          <span class="stage-label">Dismissed</span>
+          <span class="stage-count mono" id="count-dismissed">0</span>
+        </button>
+      </nav>
+
+      <div class="rail-foot">
+        <button class="stage util" data-view="profile"><span class="stage-label">Profile &amp; resume</span></button>
+        <button class="stage util" data-view="settings"><span class="stage-label">Settings</span></button>
+        <div class="link-status" id="linkStatus">
+          <span class="pulse"></span><span class="mono" id="linkStatusText">listening on :4823</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main column -->
+    <main class="main">
+      <header class="main-head">
+        <h2 id="viewTitle">Scouted</h2>
+        <p class="main-sub" id="viewSub">New matches pushed by the n8n scout, scored against your profile.</p>
+      </header>
+
+      <!-- Job list views -->
+      <section class="view" id="view-jobs">
+        <div class="search-bar" id="globalSearch">
+          <input id="searchKw" placeholder="Search any site for, e.g. 'machine learning intern'…">
+          <div class="search-sites">
+            <button class="link-btn" data-site="linkedin">LinkedIn</button>
+            <button class="link-btn" data-site="internshala">Internshala</button>
+            <button class="link-btn" data-site="naukri">Naukri</button>
+            <button class="link-btn" data-site="wellfound">Wellfound</button>
+            <button class="link-btn" data-site="indeed">Indeed</button>
+          </div>
+        </div>
+        <div class="job-list" id="jobList"></div>
+        <div class="empty" id="jobsEmpty" hidden>
+          <h3>Nothing here yet</h3>
+          <p id="emptyHint">Fill in your profile, activate the n8n workflows, then run “InternScout 1 — Internship Scout”. Matches land here automatically.</p>
+        </div>
+      </section>
+
+      <!-- Profile view -->
+      <section class="view" id="view-profile" hidden>
+        <form class="panel form" id="profileForm">
+          <div class="grid-2">
+            <label>Full name <input name="name" placeholder="Sagar …"></label>
+            <label>Email <input name="email" type="email" placeholder="you@example.com"></label>
+            <label>Location / timezone <input name="location" placeholder="Jamshedpur, India (IST)"></label>
+            <label>Links <input name="links" placeholder="GitHub, LinkedIn, portfolio"></label>
+          </div>
+          <label>Education <input name="education" placeholder="Degree, institution, year"></label>
+          <label>Skills <span class="hint">comma-separated; only skills you actually have — the matcher and tailor are instructed never to invent any</span>
+            <textarea name="skills" rows="3" placeholder="Linux administration, Python, bash, networking, …"></textarea>
+          </label>
+          <label>Interests <span class="hint">what kind of internship you want</span>
+            <textarea name="interests" rows="2" placeholder="systems engineering, devops, open source, …"></textarea>
+          </label>
+          <label>Base resume <span class="hint">plain text — your master copy. It is used as a read-only source; tailoring never edits it. Each tailored version is a separate copy stored on its job.</span>
+            <textarea name="resume" rows="16" class="mono" placeholder="Paste your full resume here…"></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn primary">Save profile</button>
+            <span class="save-note" id="profileSaved"></span>
+          </div>
+        </form>
+      </section>
+
+      <!-- Settings view -->
+      <section class="view" id="view-settings" hidden>
+        <form class="panel form" id="settingsForm">
+          <label>n8n base URL <span class="hint">where your n8n instance runs</span>
+            <input name="n8nBase" class="mono" placeholder="http://localhost:5678">
+          </label>
+          <label>Minimum match score shown <span class="hint">0–100; jobs below this are hidden from Scouted</span>
+            <input name="minScore" type="number" min="0" max="100">
+          </label>
+          <label class="check"><input type="checkbox" name="requirePaid"> <span>Paid internships only <span class="hint">drops roles confirmed unpaid; keeps ones where pay is unstated (flagged)</span></span></label>
+          <label class="check"><input type="checkbox" name="requireGlobal"> <span>Only roles open to international applicants <span class="hint">drops single-country / "must be authorized in X" roles — this is what removes the US-only clutter</span></span></label>
+          <label>Preferred domain keywords <span class="hint">roles matching these get a ranking boost (not a hard filter). Tuned for you by default.</span>
+            <input name="interestKeywords" placeholder="AI, ML, robotics, computer vision, embedded">
+          </label>
+          <label>Watched companies <span class="hint">scan these companies' official career feeds directly — the most reliable way to surface AI/robotics internships. One per line, format <code>system:token</code> (systems: greenhouse, lever, ashby, workable). The token is the slug in the company's careers URL, e.g. <code>jobs.lever.co/<b>scale</b></code>.</span>
+            <textarea name="watchedCompanies" rows="6" class="mono" placeholder="lever:scale&#10;greenhouse:databricks&#10;ashby:openai"></textarea>
+          </label>
+          <div class="form-actions" style="margin-top:-8px;margin-bottom:14px">
+            <button type="button" class="btn small" id="loadAIPack">Load AI / robotics starter pack</button>
+            <span class="hint">fills the box with example AI/ML &amp; robotics companies — verify each slug against the company's live careers page</span>
+          </div>
+          <div class="grid-2">
+            <label>Adzuna App ID <span class="hint">free key → adds salary data + auto India/intl listings. Get one at <button type="button" class="inline-link" id="adzunaLink">developer.adzuna.com</button></span><input name="adzunaAppId" class="mono" placeholder="(optional)"></label>
+            <label>Adzuna App Key <input name="adzunaAppKey" class="mono" placeholder="(optional)"></label>
+          </div>
+          <label>Adzuna countries <span class="hint">comma-separated codes; <code>in</code> = India. Default pulls India + UK + US.</span>
+            <input name="adzunaCountries" class="mono" placeholder="in,gb,us">
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn primary">Save settings</button>
+            <button type="button" class="btn" id="testN8n">Test n8n connection</button>
+            <span class="save-note" id="settingsSaved"></span>
+          </div>
+          <div class="panel-note">
+            <p class="mono small">Local API for n8n: GET http://localhost:4823/api/profile · POST http://localhost:4823/api/jobs</p>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <!-- Detail drawer -->
+    <aside class="drawer" id="drawer" hidden>
+      <div class="drawer-inner" id="drawerInner"></div>
+    </aside>
+  </div>
+
+  <div class="toast mono" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

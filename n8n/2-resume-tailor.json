@@ -1,0 +1,101 @@
+{
+  "name": "InternScout 2 - Resume Tailor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tailor-resume",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Tailor request (from app)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-560, 0],
+      "webhookId": "internscout-tailor-resume"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const MODEL = 'gpt-4o-mini'; // switch to 'gpt-4o' for deeper analysis\nconst b = $json.body || {};\nif (!b.job || !b.profile || !b.profile.resume) {\n  throw new Error('Request must include { job, profile } with profile.resume set.');\n}\nreturn { json: {\n  job: b.job,\n  profile: b.profile,\n  model: MODEL,\n  requestBody: {\n    model: MODEL,\n    temperature: 0.2,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: 'You are a recruiting analyst. Read the internship posting and identify what the hiring team is actually screening for. Respond ONLY with JSON: {\"top_priorities\": [5-8 strings, ranked], \"keywords_for_ats\": [strings taken from the posting], \"tone\": string, \"what_impresses\": one paragraph, \"what_to_avoid\": one paragraph}.' },\n      { role: 'user', content: 'POSTING\\nTitle: ' + b.job.title + '\\nCompany: ' + b.job.company + '\\nDescription:\\n' + (b.job.description || '') }\n    ]\n  }\n} };"
+      },
+      "name": "Build analysis request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-340, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "timeout": 120000 }
+      },
+      "name": "Analyze hiring priorities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-120, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Build analysis request').item.json;\nconst raw = $json.choices?.[0]?.message?.content || '{}';\nlet analysis;\ntry { analysis = JSON.parse(raw.replace(/^```(json)?/m, '').replace(/```\\s*$/m, '').trim()); }\ncatch (e) { analysis = { top_priorities: [], keywords_for_ats: [], what_impresses: '', what_to_avoid: '' }; }\n\nconst p = src.profile;\nreturn { json: {\n  job: src.job,\n  analysis,\n  requestBody: {\n    model: src.model,\n    temperature: 0.3,\n    response_format: { type: 'json_object' },\n    messages: [\n      { role: 'system', content: 'You are an expert resume writer with one hard rule: NEVER fabricate. You may only reorder, reword, quantify-where-stated, and emphasize experiences and skills that ALREADY EXIST in the candidate\\'s base resume and profile. You may not add tools, jobs, degrees, dates, or achievements that are not there. Tailor the resume to the posting by leading with the most relevant real material, mirroring the posting\\'s vocabulary where it truthfully applies, and trimming irrelevant content. Respond ONLY with JSON: {\"tailored_resume\": full plain-text resume, \"cover_letter\": 150-220 word cover letter in the candidate\\'s voice grounded only in real experience, \"changes_made\": [strings explaining each change], \"honesty_check\": confirm in one sentence that nothing was invented}.' },\n      { role: 'user', content: 'HIRING TEAM PRIORITIES (from analysis):\\n' + JSON.stringify(analysis) + '\\n\\nPOSTING\\nTitle: ' + src.job.title + '\\nCompany: ' + src.job.company + '\\nDescription:\\n' + (src.job.description || '') + '\\n\\nCANDIDATE\\nName: ' + (p.name || '') + '\\nEmail: ' + (p.email || '') + '\\nSkills: ' + (p.skills || '') + '\\nInterests: ' + (p.interests || '') + '\\nEducation: ' + (p.education || '') + '\\nLinks: ' + (p.links || '') + '\\n\\nBASE RESUME:\\n' + p.resume }\n    ]\n  }\n} };"
+      },
+      "name": "Build tailoring request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [100, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": { "timeout": 180000 }
+      },
+      "name": "Tailor with ChatGPT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const src = $('Build tailoring request').item.json;\nconst raw = $json.choices?.[0]?.message?.content || '{}';\nlet out;\ntry { out = JSON.parse(raw.replace(/^```(json)?/m, '').replace(/```\\s*$/m, '').trim()); }\ncatch (e) { out = { tailored_resume: raw, cover_letter: '', changes_made: ['Model returned non-JSON output; raw text placed in resume field.'], honesty_check: '' }; }\nreturn { json: {\n  ok: true,\n  jobId: src.job.id,\n  tailored_resume: out.tailored_resume || '',\n  cover_letter: out.cover_letter || '',\n  changes_made: out.changes_made || [],\n  honesty_check: out.honesty_check || '',\n  hiring_analysis: src.analysis,\n  tailoredAt: new Date().toISOString()\n} };"
+      },
+      "name": "Package result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Respond to app",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [760, 0]
+    }
+  ],
+  "connections": {
+    "Tailor request (from app)": { "main": [[{ "node": "Build analysis request", "type": "main", "index": 0 }]] },
+    "Build analysis request": { "main": [[{ "node": "Analyze hiring priorities", "type": "main", "index": 0 }]] },
+    "Analyze hiring priorities": { "main": [[{ "node": "Build tailoring request", "type": "main", "index": 0 }]] },
+    "Build tailoring request": { "main": [[{ "node": "Tailor with ChatGPT", "type": "main", "index": 0 }]] },
+    "Tailor with ChatGPT": { "main": [[{ "node": "Package result", "type": "main", "index": 0 }]] },
+    "Package result": { "main": [[{ "node": "Respond to app", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
